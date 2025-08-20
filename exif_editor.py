@@ -6,12 +6,35 @@
 #                 les métadonnées EXIF d'une image (EXchangeable Image File Format).
 # Version       : 1.0
 # Date          : 18-07-2025
+# Usage         : streamlit run https://raw.githubusercontent.com/julibeau/streamlit-exif-editor/main/exif_editor.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 from exif import Image
 import datetime
 from datetime import datetime
+
+def float_to_dms(coord_float, coord_type="lat"):
+    """
+    Convertit une coordonnée décimale en tuple (degrés, minutes, secondes)
+    et la référence (N/S/E/W).
+    coord_type = "lat" pour latitude, "lon" pour longitude
+    """
+    is_negative = coord_float < 0
+    coord_float = abs(coord_float)
+    degrees = int(coord_float)
+    minutes_float = (coord_float - degrees) * 60
+    minutes = int(minutes_float)
+    seconds = round((minutes_float - minutes) * 60, 6)  # précision 6 décimales
+
+    if coord_type == "lat":
+        ref = "S" if is_negative else "N"
+    elif coord_type == "lon":
+        ref = "W" if is_negative else "E"
+    else:
+        raise ValueError("coord_type doit être 'lat' ou 'lon'")
+
+    return (degrees, minutes, seconds), ref
 
 # on ouvre l'image en binaire pour récupérer ses métadonnées EXIF
 with open('IMG_7224.JPEG', 'rb') as image_file:
@@ -117,18 +140,22 @@ with st.form("exif_form"):
     offset_original = st.text_input("Offset (originale):", getattr(my_image, 'offset_time_original', ""))
     offset_digitalized = st.text_input("Offset (digitilazed):", getattr(my_image, 'offset_time_digitized', ""))
 
-    # latitude GPS au format (degrés, minutes, secondes)
+    # --- lecture des EXIF ---
     gps_lat = getattr(my_image, 'gps_latitude', (0, 0, 0))
-    # référence N ou S
     gps_lat_ref = getattr(my_image, 'gps_latitude_ref', 'N')
-    # longitude GPS
     gps_lon = getattr(my_image, 'gps_longitude', (0, 0, 0))
-    # référence E ou W
     gps_lon_ref = getattr(my_image, 'gps_longitude_ref', 'E')
 
-    # conversion en float (degrés décimaux, utile pour une carte)
+    # --- conversion en degrés décimaux ---
     gps_latitude = (gps_lat[0] + gps_lat[1]/60 + gps_lat[2]/3600) * (-1 if gps_lat_ref == 'S' else 1)
     gps_longitude = (gps_lon[0] + gps_lon[1]/60 + gps_lon[2]/3600) * (-1 if gps_lon_ref == 'W' else 1)
+
+    # --- affichage et modification ---
+    gps_latitude = st.number_input("Latitude", value=gps_latitude, format="%.g")
+    gps_longitude = st.number_input("Longitude", value=gps_longitude, format="%.g")
+
+    gps_lat, gps_lat_ref = float_to_dms(gps_latitude, "lat")
+    gps_lon, gps_lon_ref = float_to_dms(gps_longitude, "lon")
 
     # ouverture de l’objectif (nombre f/)
     f_number = st.number_input('Ouverture (F-Number):', float(getattr(my_image, 'f_number', 0.0)))
@@ -160,17 +187,15 @@ if submit:
     my_image.y_resolution = y_resolution
     my_image.software = software
     my_image.datetime = f"{date.strftime('%Y:%m:%d')} {time.strftime('%H:%M:%S')}"
-    my_image.resolution_unit = list(unit_map.keys())[list(unit_map.values()).index(resolution_unit)]
+    my_image.resolution_unit = {v: k for k, v in unit_map.items()}[resolution_unit]
     my_image.exposure_time = exposure_time
     my_image.datetime_original = f"{date_original.strftime('%Y:%m:%d')} {time_original.strftime('%H:%M:%S')}"
     my_image.datetime_digitized = f"{date_digitized.strftime('%Y:%m:%d')} {time_digitized.strftime('%H:%M:%S')}"
     my_image.offset_time = offset
     my_image.offset_time_original = offset_original
     my_image.offset_time_digitized = offset_digitalized
-    my_image.gps_latitude = gps_lat
-    my_image.gps_latitude_ref = gps_lat_ref
-    my_image.gps_longitude = gps_lon
-    my_image.gps_longitude_ref = gps_lon_ref
+    my_image.gps_latitude, my_image.gps_latitude_ref = float_to_dms(gps_latitude, "lat")
+    my_image.gps_longitude, my_image.gps_longitude_ref = float_to_dms(gps_longitude, "lon")
     my_image.f_number = f_number
     my_image.photographic_sensitivity = iso_speed
     my_image.flash = {v: k for k, v in mode_map.items()}[flash]
@@ -183,3 +208,6 @@ if submit:
         mime="image/jpeg"
     )
 
+# --- affichage sur la carte ---
+df = pd.DataFrame({'lat': [gps_latitude], 'lon': [gps_longitude]})
+st.map(df)
